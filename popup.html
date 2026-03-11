@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 220px;
+      padding: 14px;
+      font-family: monospace;
+      background: #1a1a2e;
+      color: #eee;
+      margin: 0;
+    }
+    h3 {
+      margin: 0 0 10px;
+      color: #4a9eff;
+      font-size: 14px;
+    }
+    p { font-size: 11px; color: #aaa; margin: 6px 0; line-height: 1.5; }
+    .badge {
+      display: inline-block;
+      background: #0f3460;
+      border: 1px solid #4a9eff44;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 10px;
+      color: #88ccff;
+      margin-bottom: 8px;
+    }
+    button {
+      width: 100%;
+      margin-top: 8px;
+      padding: 7px;
+      background: #4a9eff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 12px;
+      font-family: monospace;
+    }
+    button:hover { background: #2a7eff; }
+    .step { font-size: 11px; color: #ccc; margin: 4px 0 4px 2px; }
+    .step span { color: #4a9eff; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h3>⚡ Wardyati Auto-Book</h3>
+  <div class="badge">v1.0 — Active on wardyati.com</div>
+  <p>The panel is injected directly into the room page.</p>
+  <div class="step"><span>1.</span> Go to your room page</div>
+  <div class="step"><span>2.</span> The panel appears bottom-left</div>
+  <div class="step"><span>3.</span> Click a shift to select it</div>
+  <div class="step"><span>4.</span> Click ⚡ Arm before timer hits 0</div>
+  <div class="step"><span>5.</span> It fires at 16ms polling — faster than human</div>
+  <button id="open-tab">Open Room Page</button>
+  <script>
+    document.getElementById('open-tab').addEventListener('click', () => {
+      chrome.tabs.create({ url: 'https://wardyati.com/rooms/' });
+    });
+  </script>
+</body>
+</html>
