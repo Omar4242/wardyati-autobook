@@ -9,9 +9,6 @@ Never lose a shift booking to slow reflexes again. This Chrome extension detects
 
 ![Demo](https://raw.githubusercontent.com/Omar4242/wardyati-autobook/main/demo.gif)
 
-> 📌 *Replace `demo.gif` with your own screen recording. Use [ScreenToGif](https://www.screentogif.com/) to record it for free.*
-
----
 
 ## What it does
 
