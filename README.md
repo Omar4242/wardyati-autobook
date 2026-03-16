@@ -12,24 +12,11 @@ A Chrome extension that automates shift booking on wardyati.com. Instead of watc
 
 - Lists all shifts on the room page with their remaining spots
 - Lets you select the shifts you want and order them by priority
-- Polls every 300ms and fires the booking click as soon as the button unlocks
-- Enforces a 1.5s cooldown between bookings to stay within the site's rate limit
 - Persists your priority list across sessions via `chrome.storage.local`
-
----
-
-## What it doesn't do
-
-- It does not bypass network latency — your connection to the server is still the main bottleneck
-- It does not send raw HTTP requests — it clicks the button the same way you would, just faster
-- It does not guarantee you'll be first — other users on faster connections or closer to the server may still beat it
-- It does not work if the page hasn't fully loaded yet
-
----
 
 ## Installation
 
-Not on the Chrome Web Store — install manually:
+Not yet on the Chrome Web Store — install manually:
 
 1. Download or clone this repo
 2. Open Chrome and go to `chrome://extensions/`
@@ -66,7 +53,7 @@ wardyati-autobook/
 ## Technical notes
 
 - Communication between popup and content script goes through `chrome.storage.local` — this avoids Chrome's structured-clone restriction on `executeScript` args
-- Polling interval is 300ms, not faster, to avoid unnecessary CPU usage since the DOM update from the server is not instantaneous anyway
+- Polling interval is 50
 - The 1.5s cooldown between bookings reflects the site's own rate limiting behavior
 - Content script only runs on `https://wardyati.com/rooms/*`
 
