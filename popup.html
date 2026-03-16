@@ -55,10 +55,6 @@
   <div class="step"><span>4.</span> Click ⚡ Arm before timer hits 0</div>
   <div class="step"><span>5.</span> It fires at 16ms polling — faster than human</div>
   <button id="open-tab">Open Room Page</button>
-  <script>
-    document.getElementById('open-tab').addEventListener('click', () => {
-      chrome.tabs.create({ url: 'https://wardyati.com/rooms/' });
-    });
-  </script>
+  <script src="popup.js"></script>
 </body>
 </html>
