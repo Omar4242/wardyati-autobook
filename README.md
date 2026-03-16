@@ -1,104 +1,97 @@
-# ⚡ Wardyati Auto-Book
+# Wardyati Auto-Book
 
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Browser](https://img.shields.io/badge/Browser-Chrome-yellow)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen)
 
-Never lose a shift booking to slow reflexes again. This Chrome extension detects all shifts on your Wardyati room page, lets you pick your target, and fires the booking click at 16ms — before any human can react.
+A Chrome extension that automates shift booking on wardyati.com. Instead of watching the countdown and clicking manually, you pick your shifts in advance and the extension clicks the moment the booking button becomes available.
 
-![Demo](https://raw.githubusercontent.com/Omar4242/wardyati-autobook/main/demo.gif)
-
+---
 
 ## What it does
 
-- Scans all shifts on the page and shows you their status: OPEN, CLOSED, FULL, or already booked (MINE)
-- Shows remaining spots and current holder count for each shift
-- You pick the shift you want, click Arm, and forget about it
-- The moment coordination opens and the button unlocks, it clicks automatically
-- Polls every 16ms — that's one screen frame, faster than any human
+- Lists all shifts on the room page with their remaining spots
+- Lets you select the shifts you want and order them by priority
+- Polls every 300ms and fires the booking click as soon as the button unlocks
+- Enforces a 1.5s cooldown between bookings to stay within the site's rate limit
+- Persists your priority list across sessions via `chrome.storage.local`
+
+---
+
+## What it doesn't do
+
+- It does not bypass network latency — your connection to the server is still the main bottleneck
+- It does not send raw HTTP requests — it clicks the button the same way you would, just faster
+- It does not guarantee you'll be first — other users on faster connections or closer to the server may still beat it
+- It does not work if the page hasn't fully loaded yet
 
 ---
 
 ## Installation
 
-> Not on the Chrome Web Store yet — install manually in 30 seconds:
+Not on the Chrome Web Store — install manually:
 
 1. Download or clone this repo
-2. Unzip if needed
-3. Open Chrome and go to `chrome://extensions/`
-4. Turn on **Developer Mode** (toggle in the top-right corner)
-5. Click **Load unpacked** and select the `wardyati-extension` folder
-6. Done — the ⚡ icon will appear in your toolbar
+2. Open Chrome and go to `chrome://extensions/`
+3. Enable **Developer Mode** (top-right toggle)
+4. Click **Load unpacked** and select the repo folder
+5. The extension icon will appear in your toolbar
 
 ---
 
 ## How to use it
 
 1. Go to your room page on `wardyati.com/rooms/`
-2. The floating panel appears in the bottom-left corner
-3. All shifts are listed with their status and available spots
-4. Click the shift you want to book
-5. Click **⚡ Arm Auto-Book** before the countdown hits zero
-6. It fires automatically the instant the hold button becomes clickable
-
-You can drag the panel anywhere on the screen if it's in the way.
-
----
-
-## Why it's faster than doing it manually
-
-| Method | Typical Speed |
-|---|---|
-| Human click | 200–300ms after noticing |
-| Bookmarklet | 50–100ms (you still trigger it) |
-| This extension | ~16ms after unlock |
-
-The problem with manual booking isn't your internet — it's reaction time. This removes that bottleneck entirely.
+2. Click the extension icon in the toolbar
+3. All shifts with available spots are listed — click any to add it to your priority queue
+4. Use the ↑ ↓ arrows to reorder by preference
+5. Click **Arm** before the coordination window opens
+6. The extension will book your highest-priority available shift the moment the button unlocks, then move to the next after a short cooldown
 
 ---
 
 ## Project structure
 
 ```
-wardyati-extension/
-├── manifest.json      # Chrome extension config (Manifest V3)
-├── content.js         # Core logic injected into the room page
-├── popup.html         # Toolbar popup
-└── icon.png           # Extension icon
+wardyati-autobook/
+├── manifest.json   — Chrome extension config (Manifest V3)
+├── content.js      — Core polling and booking logic, injected into the room page
+├── popup.html      — Extension popup UI
+├── popup.js        — Popup logic, communicates with content script via chrome.storage.local
+└── README.md
 ```
 
 ---
 
 ## Technical notes
 
-- Built with **Manifest V3** — the current Chrome standard
-- No external libraries — pure vanilla JavaScript
-- Uses `MutationObserver` to detect when htmx updates the page DOM
-- Content script only runs on `https://wardyati.com/rooms/*` — nowhere else
-- Polling at 16ms (~60fps) is the sweet spot between speed and CPU usage
+- Communication between popup and content script goes through `chrome.storage.local` — this avoids Chrome's structured-clone restriction on `executeScript` args
+- Polling interval is 300ms, not faster, to avoid unnecessary CPU usage since the DOM update from the server is not instantaneous anyway
+- The 1.5s cooldown between bookings reflects the site's own rate limiting behavior
+- Content script only runs on `https://wardyati.com/rooms/*`
 
 ---
 
 ## Limitations
 
-- Works on wardyati.com only
-- If the server enforces its own rate limiting, client-side speed won't help
-- If multiple people are running this extension, it comes down to whose HTTP request the server processes first — that's outside anyone's control
+- **Network latency is the real bottleneck.** The extension eliminates your reaction time (~200–300ms) but cannot reduce the round-trip time between your machine and the server, which varies significantly by ISP and region
+- If the site updates its DOM structure or class names, the extension will need to be updated to match
+- If the server enforces rate limiting server-side, client-side speed provides no advantage
+- Chrome only — no Firefox support
 
 ---
 
 ## Contributing
 
-Pull requests are welcome. If you want to improve something:
+Pull requests are welcome.
 
 1. Fork the repo
 2. Create a branch: `git checkout -b feature/your-feature`
-3. Commit your changes: `git commit -m "Add your feature"`
+3. Commit: `git commit -m "describe your change"`
 4. Push: `git push origin feature/your-feature`
 5. Open a Pull Request
 
-If you find a bug or have a feature idea, open an [issue](https://github.com/Omar4242/wardyati-autobook/issues).
+For bugs or feature requests, open an [issue](https://github.com/Omar4242/wardyati-autobook/issues).
 
 ---
 
