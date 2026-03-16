@@ -5,8 +5,8 @@
   'use strict';
 
   const STORAGE_KEY = 'wardyati_state';
-  const CHECK_INTERVAL = 300;  // ms between booking attempts
-  const RETRY_DELAY = 1500;    // ms cooldown after a booking
+  const CHECK_INTERVAL = 50;  // ms between booking attempts
+  const RETRY_DELAY = 50;    // ms cooldown after a booking
 
   let priorityList = [];
   let isArmed = false;
