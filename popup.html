@@ -1,60 +1,319 @@
 <!DOCTYPE html>
-<html>
+<html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <style>
-    body {
-      width: 220px;
-      padding: 14px;
-      font-family: monospace;
-      background: #1a1a2e;
-      color: #eee;
-      margin: 0;
-    }
-    h3 {
-      margin: 0 0 10px;
-      color: #4a9eff;
-      font-size: 14px;
-    }
-    p { font-size: 11px; color: #aaa; margin: 6px 0; line-height: 1.5; }
-    .badge {
-      display: inline-block;
-      background: #0f3460;
-      border: 1px solid #4a9eff44;
-      border-radius: 4px;
-      padding: 2px 7px;
-      font-size: 10px;
-      color: #88ccff;
-      margin-bottom: 8px;
-    }
-    button {
-      width: 100%;
-      margin-top: 8px;
-      padding: 7px;
-      background: #4a9eff;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      font-weight: bold;
-      font-size: 12px;
-      font-family: monospace;
-    }
-    button:hover { background: #2a7eff; }
-    .step { font-size: 11px; color: #ccc; margin: 4px 0 4px 2px; }
-    .step span { color: #4a9eff; font-weight: bold; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wardyati Auto-Book</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    background: #0f1117;
+    color: #e8eaf0;
+    width: 360px;
+    min-height: 200px;
+    font-size: 13px;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #1a1d2e, #232640);
+    padding: 12px 14px;
+    border-bottom: 1px solid #2e3150;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .header-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #a78bfa;
+    letter-spacing: 0.3px;
+  }
+
+  .header-sub {
+    font-size: 10px;
+    color: #6b7280;
+    margin-top: 1px;
+  }
+
+  .status-badge {
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid;
+    cursor: default;
+  }
+  .status-badge.armed {
+    background: #052e16;
+    border-color: #16a34a;
+    color: #4ade80;
+  }
+  .status-badge.disarmed {
+    background: #1c1917;
+    border-color: #44403c;
+    color: #78716c;
+  }
+
+  .section {
+    padding: 10px 14px;
+    border-bottom: 1px solid #1e2030;
+  }
+
+  .section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6b7280;
+    margin-bottom: 7px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .shifts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  .shift-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 8px;
+    background: #1a1d2e;
+    border: 1px solid #2e3150;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    user-select: none;
+  }
+  .shift-item:hover { background: #1f2340; border-color: #4f46e5; }
+  .shift-item.selected {
+    background: #1e1b4b;
+    border-color: #6d28d9;
+  }
+
+  .shift-check {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid #4b5563;
+    border-radius: 3px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+  }
+  .shift-item.selected .shift-check {
+    background: #7c3aed;
+    border-color: #7c3aed;
+    color: white;
+  }
+
+  .shift-info { flex: 1; min-width: 0; }
+  .shift-name { font-weight: 600; color: #c4b5fd; font-size: 12px; }
+  .shift-meta { color: #6b7280; font-size: 10px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .shift-spots {
+    font-size: 10px;
+    color: #6ee7b7;
+    background: #052e1655;
+    border: 1px solid #065f4655;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Priority list */
+  .priority-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+
+  .priority-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 7px;
+    background: #161827;
+    border: 1px solid #2e3150;
+    border-radius: 5px;
+  }
+
+  .priority-num {
+    width: 18px;
+    height: 18px;
+    background: #312e81;
+    color: #a5b4fc;
+    border-radius: 50%;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .priority-info { flex: 1; min-width: 0; }
+  .priority-name { font-size: 11px; color: #ddd6fe; font-weight: 600; }
+  .priority-meta { font-size: 10px; color: #6b7280; }
+
+  .priority-btns { display: flex; gap: 3px; flex-shrink: 0; }
+  .p-btn {
+    width: 20px; height: 20px;
+    background: #1e2030;
+    border: 1px solid #374151;
+    border-radius: 4px;
+    color: #9ca3af;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.1s, color 0.1s;
+  }
+  .p-btn:hover { background: #2d3148; color: #e5e7eb; }
+  .p-btn.remove:hover { background: #3f0f0f; color: #f87171; border-color: #7f1d1d; }
+
+  /* Buttons */
+  .btn-row {
+    display: flex;
+    gap: 6px;
+    padding: 10px 14px;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 7px 0;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  .btn:hover { opacity: 0.9; }
+  .btn:active { transform: scale(0.97); }
+
+  .btn-refresh {
+    background: #1e2030;
+    border: 1px solid #374151;
+    color: #9ca3af;
+    flex: 0;
+    padding: 7px 12px;
+  }
+  .btn-refresh:hover { color: #e5e7eb; background: #252840; }
+
+  .btn-arm {
+    background: linear-gradient(135deg, #16a34a, #15803d);
+    color: white;
+  }
+  .btn-arm.active {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+  }
+
+  .empty-msg {
+    color: #4b5563;
+    font-size: 11px;
+    text-align: center;
+    padding: 10px 0;
+    font-style: italic;
+  }
+
+  .log-area {
+    padding: 6px 14px 10px;
+  }
+  .log-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #4b5563;
+    margin-bottom: 4px;
+  }
+  .log-box {
+    background: #0d0f1a;
+    border: 1px solid #1e2030;
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 10px;
+    color: #6b7280;
+    max-height: 50px;
+    overflow-y: auto;
+    font-family: monospace;
+  }
+  .log-box .log-entry { margin-bottom: 2px; }
+  .log-box .log-entry.ok { color: #4ade80; }
+  .log-box .log-entry.info { color: #60a5fa; }
+  .log-box .log-entry.warn { color: #fbbf24; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+
+  .no-page {
+    padding: 20px 14px;
+    text-align: center;
+    color: #6b7280;
+    font-size: 12px;
+  }
+  .no-page b { color: #a78bfa; display: block; margin-bottom: 6px; font-size: 13px; }
+</style>
 </head>
 <body>
-  <h3>⚡ Wardyati Auto-Book</h3>
-  <div class="badge">v1.0 — Active on wardyati.com</div>
-  <p>The panel is injected directly into the room page.</p>
-  <div class="step"><span>1.</span> Go to your room page</div>
-  <div class="step"><span>2.</span> The panel appears bottom-left</div>
-  <div class="step"><span>3.</span> Click a shift to select it</div>
-  <div class="step"><span>4.</span> Click ⚡ Arm before timer hits 0</div>
-  <div class="step"><span>5.</span> It fires at 16ms polling — faster than human</div>
-  <button id="open-tab">Open Room Page</button>
-  <script src="popup.js"></script>
+
+<div class="header">
+  <div>
+    <div class="header-title">⚡ Wardyati Auto-Book</div>
+    <div class="header-sub">حجز الورديات تلقائياً</div>
+  </div>
+  <div id="statusBadge" class="status-badge disarmed">معطّل</div>
+</div>
+
+<div id="mainContent">
+  <!-- Available Shifts -->
+  <div class="section">
+    <div class="section-label">🟢 الورديات المتاحة <span id="shiftCount" style="color:#4b5563">(0)</span></div>
+    <div id="shiftsList" class="shifts-list">
+      <div class="empty-msg">جاري التحميل...</div>
+    </div>
+  </div>
+
+  <!-- Priority Queue -->
+  <div class="section">
+    <div class="section-label">🎯 قائمة الأولويات</div>
+    <div id="priorityList" class="priority-list">
+      <div class="empty-msg">لم يتم اختيار ورديات بعد</div>
+    </div>
+  </div>
+
+  <!-- Action Buttons -->
+  <div class="btn-row">
+    <button class="btn btn-refresh" id="btnRefresh" title="تحديث القائمة">↻</button>
+    <button class="btn btn-arm" id="btnArm">🔒 تفعيل الحجز التلقائي</button>
+  </div>
+
+  <!-- Log -->
+  <div class="log-area">
+    <div class="log-label">السجل</div>
+    <div class="log-box" id="logBox">
+      <div class="log-entry info">جاهز. اختر الورديات ورتّبها.</div>
+    </div>
+  </div>
+</div>
+
+<div id="noPage" class="no-page" style="display:none">
+  <b>Wardyati Auto-Book</b>
+  افتح صفحة غرفة على wardyati.com لتفعيل الإضافة.
+</div>
+
+<script src="popup.js"></script>
 </body>
 </html>
