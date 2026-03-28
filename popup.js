@@ -81,7 +81,7 @@
       isArmed = !!detail.isArmed;
       renderAll();
       $('shiftCount').textContent = `(${availableShifts.length})`;
-      log(`تم تحميل ${availableShifts.length} وردية`, 'info');
+      log(`Loaded ${availableShifts.length} shifts`, 'info');
     }
 
     if (detail.type === 'status') {
@@ -92,7 +92,7 @@
     }
 
     if (detail.type === 'booked') {
-      log(`✅ تم حجز: ${detail.name}`, 'ok');
+      log(`✅ Booked: ${detail.name}`, 'ok');
       setTimeout(() => sendAction('get_shifts'), 1500);
     }
   }
@@ -109,7 +109,7 @@
     container.innerHTML = '';
 
     if (!availableShifts.length) {
-      container.innerHTML = '<div class="empty-msg">لا توجد ورديات متاحة أو الصفحة لم تُحمَّل بعد</div>';
+      container.innerHTML = '<div class="empty-msg">No available shifts or page not loaded yet</div>';
       return;
     }
 
@@ -120,7 +120,7 @@
       el.className = 'shift-item' + (priorityIds.has(s.id) ? ' selected' : '');
 
       const label = s.maxReached
-        ? ' <span style="color:#f87171;font-size:9px">(الحد الأقصى)</span>' : '';
+        ? ' <span style="color:#f87171;font-size:9px">(limit reached)</span>' : '';
 
       el.innerHTML = `
         <div class="shift-check">${priorityIds.has(s.id) ? '✓' : ''}</div>
@@ -128,7 +128,7 @@
           <div class="shift-name">${esc(s.name)} <span style="color:#6b7280;font-weight:400;font-size:10px">${esc(s.date)}</span></div>
           <div class="shift-meta">${esc(s.time)}${s.pool ? ' · ' + esc(s.pool) : ''}${label}</div>
         </div>
-        <div class="shift-spots">${s.remaining} متبقي</div>
+        <div class="shift-spots">${s.remaining} left</div>
       `;
 
       el.addEventListener('click', () => toggleShift(s));
@@ -147,10 +147,10 @@
         time: String(s.time || ''),
         pool: String(s.pool || '')
       });
-      log(`أُضيفت: ${s.name} (${s.date})`, 'info');
+      log(`Added: ${s.name} (${s.date})`, 'info');
     } else {
       priorityList.splice(idx, 1);
-      log(`أُزيلت: ${s.name}`, 'warn');
+      log(`Removed: ${s.name}`, 'warn');
     }
     persistPriority();
     renderShifts();
@@ -162,7 +162,7 @@
     container.innerHTML = '';
 
     if (!priorityList.length) {
-      container.innerHTML = '<div class="empty-msg">اضغط على وردية لإضافتها هنا</div>';
+      container.innerHTML = '<div class="empty-msg">Click a shift to add it here</div>';
       return;
     }
 
@@ -197,7 +197,7 @@
         if (act === 'down') movePriority(idx, idx + 1);
         if (act === 'remove') {
           const removed = priorityList.splice(idx, 1)[0];
-          log(`أُزيلت: ${removed.name}`, 'warn');
+          log(`Removed: ${removed.name}`, 'warn');
           persistPriority();
           renderShifts();
           renderPriority();
@@ -224,33 +224,33 @@
     const btn = $('btnArm');
     const badge = $('statusBadge');
     if (isArmed) {
-      btn.textContent = '🛑 إيقاف الحجز التلقائي';
+      btn.textContent = '🛑 Stop Auto-Book';
       btn.classList.add('active');
-      badge.textContent = 'مفعّل';
+      badge.textContent = 'Active';
       badge.className = 'status-badge armed';
     } else {
-      btn.textContent = '🔒 تفعيل الحجز التلقائي';
+      btn.textContent = '🔒 Enable Auto-Book';
       btn.classList.remove('active');
-      badge.textContent = 'معطّل';
+      badge.textContent = 'Inactive';
       badge.className = 'status-badge disarmed';
     }
   }
 
   $('btnArm').addEventListener('click', () => {
     if (!priorityList.length) {
-      log('⚠️ اختر وردية واحدة على الأقل أولاً', 'warn');
+      log('⚠️ Select at least one shift first', 'warn');
       return;
     }
     isArmed = !isArmed;
     saveState({ isArmed });
     sendAction(isArmed ? 'arm' : 'disarm');
     updateArmButton();
-    log(isArmed ? '🟢 الحجز التلقائي مفعّل' : '🔴 الحجز التلقائي موقوف',
+    log(isArmed ? '🟢 Auto-book enabled' : '🔴 Auto-book stopped',
         isArmed ? 'ok' : 'warn');
   });
 
   $('btnRefresh').addEventListener('click', () => {
-    log('تحديث...', 'info');
+    log('Refreshing...', 'info');
     sendAction('get_shifts');
   });
 
