@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -272,46 +272,50 @@
 <div class="header">
   <div>
     <div class="header-title">⚡ Wardyati Auto-Book</div>
-    <div class="header-sub">حجز الورديات تلقائياً</div>
+    <div class="header-sub">Automated shift booking</div>
   </div>
-  <div id="statusBadge" class="status-badge disarmed">معطّل</div>
+  <div id="statusBadge" class="status-badge disarmed">Inactive</div>
 </div>
 
 <div id="mainContent">
   <!-- Available Shifts -->
   <div class="section">
-    <div class="section-label">🟢 الورديات المتاحة <span id="shiftCount" style="color:#4b5563">(0)</span></div>
+    <div class="section-label">🟢 Available Shifts <span id="shiftCount" style="color:#4b5563">(0)</span></div>
     <div id="shiftsList" class="shifts-list">
-      <div class="empty-msg">جاري التحميل...</div>
+      <div class="empty-msg">Loading...</div>
     </div>
   </div>
 
   <!-- Priority Queue -->
   <div class="section">
-    <div class="section-label">🎯 قائمة الأولويات</div>
+    <div class="section-label">🎯 Priority Queue</div>
     <div id="priorityList" class="priority-list">
-      <div class="empty-msg">لم يتم اختيار ورديات بعد</div>
+      <div class="empty-msg">No shifts selected yet</div>
     </div>
   </div>
 
   <!-- Action Buttons -->
   <div class="btn-row">
-    <button class="btn btn-refresh" id="btnRefresh" title="تحديث القائمة">↻</button>
-    <button class="btn btn-arm" id="btnArm">🔒 تفعيل الحجز التلقائي</button>
+    <button class="btn btn-refresh" id="btnRefresh" title="Refresh shifts">↻</button>
+    <button class="btn btn-arm" id="btnArm">🔒 Enable Auto-Book</button>
   </div>
 
   <!-- Log -->
   <div class="log-area">
-    <div class="log-label">السجل</div>
+    <div class="log-label">Log</div>
     <div class="log-box" id="logBox">
-      <div class="log-entry info">جاهز. اختر الورديات ورتّبها.</div>
+      <div class="log-entry info">Ready. Select shifts and set priority.</div>
     </div>
   </div>
 </div>
 
 <div id="noPage" class="no-page" style="display:none">
   <b>Wardyati Auto-Book</b>
-  افتح صفحة غرفة على wardyati.com لتفعيل الإضافة.
+  Open a room page on wardyati.com to use this extension.
+</div>
+
+<div style="padding: 6px 14px 8px; font-size: 10px; color: #374151; text-align: center;">
+  Programmed by <a href="https://github.com/Omar4242" style="color:#6b7280; text-decoration:none;">Omar4242</a>
 </div>
 
 <script src="popup.js"></script>
