@@ -1,25 +1,30 @@
 // Wardyati Auto-Book Content Script
 // Data flows: priority list & arm state live in chrome.storage.local.
 // Popup sends only plain string action names via executeScript args.
-// Booking speed: uses htmx response event instead of a fixed retry delay —
-// the next shift is attempted the moment the server confirms the previous booking.
+//
+// Booking strategy:
+// - Each shift in the priority queue gets a maximum of MAX_TRIALS attempts.
+// - Every polling tick fires the next due attempt in round-robin priority order,
+//   without waiting for the server response of the previous attempt.
+// - A shift is dropped from the queue once it is booked OR exhausts MAX_TRIALS.
 (function () {
   'use strict';
 
   const STORAGE_KEY    = 'wardyati_state';
   const CHECK_INTERVAL = 50;   // ms between polling ticks
-  const SAFETY_DELAY   = 50;   // ms after server response before next attempt
-                                // (just enough for htmx to update the DOM)
+  const MAX_TRIALS     = 5;    // max submission attempts per shift before skipping
 
-  let priorityList      = [];
-  let isArmed           = false;
-  let bookingInProgress = false;
-  let checkTimer        = null;
+  let priorityList = [];  // [{id, name, date, time, pool}, ...]
+  let isArmed      = false;
+  let checkTimer   = null;
 
-  // Track what we just tried to book so onHtmxResponse can reference it
-  let currentBookingId   = null;
-  let currentBookingName = null;
-  let fallbackTimer      = null;
+  // Per-session trial counters — NOT persisted, reset if page reloads.
+  // Key: shift id, Value: number of times we have fired a booking attempt.
+  const trialCount = {};
+
+  // Round-robin cursor: index into priorityList of the next shift to attempt.
+  // Advances each tick so attempts are spread evenly across all queued shifts.
+  let cursor = 0;
 
   // ── Storage helpers ────────────────────────────────────────────────────────
   function readState(cb) {
@@ -34,10 +39,10 @@
     });
   }
 
-  function persistState(patch, cb) {
+  function persistState(patch) {
     chrome.storage.local.get(STORAGE_KEY, (res) => {
       const state = { ...(res[STORAGE_KEY] || {}), ...patch };
-      chrome.storage.local.set({ [STORAGE_KEY]: state }, cb);
+      chrome.storage.local.set({ [STORAGE_KEY]: state });
     });
   }
 
@@ -50,18 +55,14 @@
     const pastTime   = el.dataset.pastTime === 'true';
     const maxReached = el.dataset.maxReachedForUser === 'true';
 
-    const namEl = el.querySelector('.text-truncate');
-    const name  = namEl ? namEl.textContent.trim() : '—';
-
-    const timeEl = el.querySelector('.text-nowrap');
-    const time   = timeEl ? timeEl.textContent.trim() : '';
-
-    const dayCard = el.closest('[id^="arena_day_"]');
-    const date    = dayCard ? dayCard.id.replace('arena_day_', '') : '';
-
-    const poolEl = el.querySelector('.pool-info small');
-    const pool   = poolEl ? poolEl.textContent.trim() : '';
-
+    const namEl    = el.querySelector('.text-truncate');
+    const name     = namEl ? namEl.textContent.trim() : '—';
+    const timeEl   = el.querySelector('.text-nowrap');
+    const time     = timeEl ? timeEl.textContent.trim() : '';
+    const dayCard  = el.closest('[id^="arena_day_"]');
+    const date     = dayCard ? dayCard.id.replace('arena_day_', '') : '';
+    const poolEl   = el.querySelector('.pool-info small');
+    const pool     = poolEl ? poolEl.textContent.trim() : '';
     const remainEl = el.querySelector('.remaining_holdings_count .number-container');
     const remaining = remainEl ? parseInt(remainEl.dataset.number, 10) || 0 : 0;
 
@@ -74,108 +75,104 @@
       .filter(s => s && !s.noPlace && !s.pastTime && s.remaining > 0);
   }
 
-  // ── htmx response hook ─────────────────────────────────────────────────────
-  // htmx fires 'htmx:afterRequest' on the document after every request.
-  // We filter to only hold-action URLs so we don't interfere with anything else.
-  // This replaces the fixed RETRY_DELAY entirely — bookingInProgress unlocks
-  // the moment the server responds, not after an arbitrary timer.
+  // ── Queue management ───────────────────────────────────────────────────────
+  // Remove a shift from the priority list and persist the change.
+  function dropShift(id, reason) {
+    console.log('[Wardyati] Dropping shift', id, '—', reason);
+    priorityList = priorityList.filter(p => p.id !== id);
+    delete trialCount[id];
 
-  function onHtmxResponse(evt) {
-    if (!bookingInProgress) return;
+    // Keep cursor in bounds after removal
+    if (cursor >= priorityList.length) cursor = 0;
 
-    // Reconstruct the request URL from htmx event detail
-    const requestPath = evt.detail && evt.detail.pathInfo
-      ? evt.detail.pathInfo.requestPath || ''
-      : '';
-    const responseURL = evt.detail && evt.detail.xhr
-      ? evt.detail.xhr.responseURL || ''
-      : '';
-    const url = requestPath || responseURL;
+    const patch = { priorityList };
+    if (priorityList.length === 0) {
+      isArmed       = false;
+      patch.isArmed = false;
+      stopPolling();
+      console.log('[Wardyati] All shifts handled — disarmed.');
+    }
+    persistState(patch);
 
-    if (!url.includes('/action/hold/')) return;
-
-    const status = evt.detail.xhr ? evt.detail.xhr.status : 0;
-
-    // Clear the fallback since htmx responded normally
-    if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
-
-    // Wait SAFETY_DELAY ms for htmx to finish updating the DOM,
-    // then unlock so polling can immediately attempt the next shift
-    setTimeout(() => {
-      bookingInProgress = false;
-
-      if (status === 200) {
-        console.log('[Wardyati] Server confirmed booking:', currentBookingId);
-        window.dispatchEvent(new CustomEvent('wardyati_ext', {
-          detail: { type: 'booked', id: currentBookingId, name: currentBookingName }
-        }));
-      } else {
-        // Server rejected (rate limit, already booked, etc.) — polling will retry
-        console.warn('[Wardyati] Booking rejected, status:', status);
-      }
-
-      currentBookingId   = null;
-      currentBookingName = null;
-    }, SAFETY_DELAY);
-  }
-
-  document.addEventListener('htmx:afterRequest', onHtmxResponse);
-
-  // ── Fallback ───────────────────────────────────────────────────────────────
-  // If htmx never fires (network error, timeout) bookingInProgress would
-  // stay true forever and lock the extension. Release after 5s maximum.
-  function armFallback() {
-    if (fallbackTimer) clearTimeout(fallbackTimer);
-    fallbackTimer = setTimeout(() => {
-      if (bookingInProgress) {
-        console.warn('[Wardyati] Fallback: unlocking after 5s with no server response');
-        bookingInProgress  = false;
-        currentBookingId   = null;
-        currentBookingName = null;
-      }
-    }, 5000);
+    window.dispatchEvent(new CustomEvent('wardyati_ext', {
+      detail: { type: 'booked', id, name: (priorityList.find(p => p.id === id) || {}).name || id }
+    }));
   }
 
   // ── Booking ────────────────────────────────────────────────────────────────
   function tryBookNext() {
-    if (!isArmed || bookingInProgress) return;
+    if (!isArmed || priorityList.length === 0) return;
 
-    for (const item of priorityList) {
-      const liveEl = document.getElementById('shift_instance_' + item.id);
-      if (!liveEl) continue;
+    // Wrap cursor
+    if (cursor >= priorityList.length) cursor = 0;
 
-      if (liveEl.dataset.noPlace           === 'true') continue;
-      if (liveEl.dataset.pastTime          === 'true') continue;
-      if (liveEl.dataset.maxReachedForUser === 'true') continue;
+    // Walk the list once starting from cursor, find the next actionable item
+    const start = cursor;
+    let tried = 0;
 
-      const btn = liveEl.querySelector('.button_hold');
-      if (!btn) continue;
-      if (btn.classList.contains('d-none') || btn.disabled) continue;
+    while (tried < priorityList.length) {
+      const idx  = (start + tried) % priorityList.length;
+      const item = priorityList[idx];
 
-      // Button is live — fire the booking
-      bookingInProgress  = true;
-      currentBookingId   = item.id;
-      currentBookingName = item.name;
-      console.log('[Wardyati] Firing booking:', item.id, item.name);
-      btn.click();
-      armFallback();
+      if (!trialCount[item.id]) trialCount[item.id] = 0;
 
-      // Remove from priority list immediately
-      priorityList = priorityList.filter(p => p.id !== item.id);
-      const patch = { priorityList };
-      if (priorityList.length === 0) {
-        isArmed       = false;
-        patch.isArmed = false;
-        stopPolling();
+      // Drop if trial cap reached
+      if (trialCount[item.id] >= MAX_TRIALS) {
+        dropShift(item.id, 'trial cap reached');
+        // List mutated — restart from same cursor position
+        tryBookNext();
+        return;
       }
-      persistState(patch);
 
-      return; // onHtmxResponse will unlock bookingInProgress
+      const liveEl = document.getElementById('shift_instance_' + item.id);
+      if (liveEl) {
+        if (liveEl.dataset.noPlace           === 'true') { dropShift(item.id, 'no places left'); return; }
+        if (liveEl.dataset.pastTime          === 'true') { dropShift(item.id, 'past time');      return; }
+        if (liveEl.dataset.maxReachedForUser === 'true') { dropShift(item.id, 'max reached');    return; }
+
+        const btn = liveEl.querySelector('.button_hold');
+        if (btn && !btn.classList.contains('d-none') && !btn.disabled) {
+          // Fire the attempt
+          trialCount[item.id]++;
+          console.log(
+            `[Wardyati] Attempt ${trialCount[item.id]}/${MAX_TRIALS} — shift ${item.id} (${item.name})`
+          );
+          btn.click();
+
+          // Advance cursor so next tick tries the next shift in order
+          cursor = (idx + 1) % priorityList.length;
+          return;
+        }
+      }
+
+      tried++;
     }
+
+    // No actionable shift found this tick — advance cursor anyway
+    cursor = (cursor + 1) % Math.max(priorityList.length, 1);
   }
+
+  // Listen for successful booking confirmation from htmx response
+  // so we can drop the shift as soon as the server confirms it.
+  document.addEventListener('htmx:afterRequest', (evt) => {
+    const url    = (evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || '';
+    const status = evt.detail.xhr ? evt.detail.xhr.status : 0;
+    if (!url.includes('/action/hold/') || status !== 200) return;
+
+    // Extract shift id from URL: /rooms/.../shift-instances/{id}/action/hold/
+    const match = url.match(/shift-instances\/(\d+)\/action\/hold/);
+    if (!match) return;
+    const bookedId = match[1];
+
+    // Only drop if it's still in our list (not already dropped by cap)
+    if (priorityList.find(p => p.id === bookedId)) {
+      dropShift(bookedId, 'server confirmed booking');
+    }
+  });
 
   function startPolling() {
     stopPolling();
+    cursor     = 0;
     checkTimer = setInterval(tryBookNext, CHECK_INTERVAL);
   }
 
