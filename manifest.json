@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Wardyati Auto-Book",
+  "version": "1.0",
+  "description": "Auto-book shifts on wardyati.com with priority ordering",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://wardyati.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://wardyati.com/rooms/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Wardyati Auto-Book"
+  }
+}
