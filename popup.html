@@ -254,8 +254,95 @@
   .log-box .log-entry.info { color: #60a5fa; }
   .log-box .log-entry.warn { color: #fbbf24; }
 
+
+  .rate-limit-bar {
+    display: none;
+    margin: 0 14px 6px;
+    background: #1c1917;
+    border: 1px solid #b45309;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: #fbbf24;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .rate-limit-bar .rl-label { font-weight: 600; }
+  .rate-limit-bar .rl-countdown {
+    font-weight: 700;
+    font-size: 13px;
+    color: #f97316;
+    min-width: 28px;
+    text-align: right;
+  }
+  .rate-limit-bar .rl-note {
+    color: #78716c;
+    font-size: 10px;
+    flex: 1;
+  }
+
   ::-webkit-scrollbar { width: 4px; }
+
+  .rate-limit-bar {
+    display: none;
+    margin: 0 14px 6px;
+    background: #1c1917;
+    border: 1px solid #b45309;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: #fbbf24;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .rate-limit-bar .rl-label { font-weight: 600; }
+  .rate-limit-bar .rl-countdown {
+    font-weight: 700;
+    font-size: 13px;
+    color: #f97316;
+    min-width: 28px;
+    text-align: right;
+  }
+  .rate-limit-bar .rl-note {
+    color: #78716c;
+    font-size: 10px;
+    flex: 1;
+  }
+
   ::-webkit-scrollbar-track { background: transparent; }
+
+  .rate-limit-bar {
+    display: none;
+    margin: 0 14px 6px;
+    background: #1c1917;
+    border: 1px solid #b45309;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: #fbbf24;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .rate-limit-bar .rl-label { font-weight: 600; }
+  .rate-limit-bar .rl-countdown {
+    font-weight: 700;
+    font-size: 13px;
+    color: #f97316;
+    min-width: 28px;
+    text-align: right;
+  }
+  .rate-limit-bar .rl-note {
+    color: #78716c;
+    font-size: 10px;
+    flex: 1;
+  }
+
   ::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
 
   .no-page {
@@ -298,6 +385,14 @@
   <div class="btn-row">
     <button class="btn btn-refresh" id="btnRefresh" title="Refresh shifts">↻</button>
     <button class="btn btn-arm" id="btnArm">🔒 Enable Auto-Book</button>
+  </div>
+
+
+  <!-- Rate Limit Bar -->
+  <div id="rateLimitBar" class="rate-limit-bar">
+    <span class="rl-label">⏳ Wait</span>
+    <span class="rl-note">Rate limit — next booking in</span>
+    <span id="rateLimitCountdown" class="rl-countdown">...</span>
   </div>
 
   <!-- Log -->

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Wardyati Auto-Book",
-  "version": "1.0",
+  "version": "2.0",
   "description": "Auto-book shifts on wardyati.com with priority ordering",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["https://wardyati.com/*"],
@@ -14,6 +14,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
+    "default_icon": "icon.png",
     "default_title": "Wardyati Auto-Book"
   }
 }

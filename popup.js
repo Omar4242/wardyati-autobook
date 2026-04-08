@@ -1,23 +1,27 @@
-// popup.js — uses chrome.storage.local for all data passing (no args serialization issues)
+// popup.js — v3.0
 (function () {
   'use strict';
 
   const STORAGE_KEY = 'wardyati_state';
 
-  let tabId = null;
-  let isArmed = false;
+  let tabId           = null;
+  let isArmed         = false;
   let availableShifts = [];
-  let priorityList = [];
+  let priorityList    = [];
+  let shiftsReceived  = false;
+  let retryTimer      = null;
+  let countdownTimer  = null;
+  let rateLimitSecs   = 0;
 
   const $ = id => document.getElementById(id);
 
   // ── Logging ────────────────────────────────────────────────────────────────
   function log(msg, type = 'info') {
     const box = $('logBox');
-    const el = document.createElement('div');
+    const el  = document.createElement('div');
     el.className = 'log-entry ' + type;
     const now = new Date();
-    const ts = [now.getHours(), now.getMinutes(), now.getSeconds()]
+    const ts  = [now.getHours(), now.getMinutes(), now.getSeconds()]
       .map(n => String(n).padStart(2, '0')).join(':');
     el.textContent = `[${ts}] ${msg}`;
     box.appendChild(el);
@@ -37,8 +41,7 @@
     chrome.storage.local.get(STORAGE_KEY, (res) => cb(res[STORAGE_KEY] || {}));
   }
 
-  // ── Send a simple string action to content script (no data in args) ────────
-  // All real data travels through chrome.storage.local, not args.
+  // ── Send action ────────────────────────────────────────────────────────────
   function sendAction(action) {
     if (!tabId) return;
     chrome.scripting.executeScript({
@@ -46,11 +49,11 @@
       func: (act) => {
         window.dispatchEvent(new CustomEvent('wardyati_popup', { detail: { action: act } }));
       },
-      args: [action]   // only a plain string — always serializable
+      args: [action]
     });
   }
 
-  // ── Bridge: forward content-script events back to popup ───────────────────
+  // ── Bridge ─────────────────────────────────────────────────────────────────
   function setupBridge() {
     if (!tabId) return;
     chrome.scripting.executeScript({
@@ -62,7 +65,6 @@
           chrome.runtime.sendMessage({ wardyati: true, detail: e.detail });
         });
       }
-      // no args needed
     });
   }
 
@@ -71,17 +73,26 @@
     handleContentMsg(msg.detail);
   });
 
+  // ── Message handler ────────────────────────────────────────────────────────
   function handleContentMsg(detail) {
     if (!detail) return;
 
     if (detail.type === 'shifts') {
+      shiftsReceived  = true;
+      if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
       availableShifts = detail.shifts || [];
-      // Restore priority list from storage (content script echoes it back)
       if (Array.isArray(detail.priorityList)) priorityList = detail.priorityList;
       isArmed = !!detail.isArmed;
+      if (typeof detail.rateLimited !== 'undefined') {
+        setRateLimitDisplay(detail.rateLimited, detail.rateLimitSecondsLeft || 0);
+      }
       renderAll();
       $('shiftCount').textContent = `(${availableShifts.length})`;
-      log(`Loaded ${availableShifts.length} shifts`, 'info');
+      if (availableShifts.length === 0) {
+        log('No shifts in DOM yet — arena still loading?', 'warn');
+      } else {
+        log(`Loaded ${availableShifts.length} shifts`, 'info');
+      }
     }
 
     if (detail.type === 'status') {
@@ -95,6 +106,43 @@
       log(`✅ Booked: ${detail.name}`, 'ok');
       setTimeout(() => sendAction('get_shifts'), 1500);
     }
+
+    if (detail.type === 'rate_limit') {
+      setRateLimitDisplay(detail.limited, detail.secondsLeft || 0);
+    }
+  }
+
+  // ── Rate-limit display ─────────────────────────────────────────────────────
+  function setRateLimitDisplay(limited, secondsLeft) {
+    const bar = $('rateLimitBar');
+    if (!bar) return;
+
+    if (!limited) {
+      bar.style.display = 'none';
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      rateLimitSecs = 0;
+      return;
+    }
+
+    bar.style.display = 'block';
+    rateLimitSecs = secondsLeft;
+    updateCountdownText();
+
+    if (countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = setInterval(() => {
+      rateLimitSecs = Math.max(0, rateLimitSecs - 1);
+      updateCountdownText();
+      if (rateLimitSecs === 0) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+        bar.style.display = 'none';
+      }
+    }, 1000);
+  }
+
+  function updateCountdownText() {
+    const el = $('rateLimitCountdown');
+    if (el) el.textContent = rateLimitSecs > 0 ? `${rateLimitSecs}s` : '...';
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -109,7 +157,9 @@
     container.innerHTML = '';
 
     if (!availableShifts.length) {
-      container.innerHTML = '<div class="empty-msg">No available shifts or page not loaded yet</div>';
+      container.innerHTML = shiftsReceived
+        ? '<div class="empty-msg">No shifts found on this page</div>'
+        : '<div class="empty-msg">Loading...</div>';
       return;
     }
 
@@ -118,15 +168,13 @@
     availableShifts.forEach(s => {
       const el = document.createElement('div');
       el.className = 'shift-item' + (priorityIds.has(s.id) ? ' selected' : '');
-
-      const label = s.maxReached
-        ? ' <span style="color:#f87171;font-size:9px">(limit reached)</span>' : '';
+      const dimStyle = !s.canHold ? ' style="opacity:0.5"' : '';
 
       el.innerHTML = `
         <div class="shift-check">${priorityIds.has(s.id) ? '✓' : ''}</div>
-        <div class="shift-info">
+        <div class="shift-info"${dimStyle}>
           <div class="shift-name">${esc(s.name)} <span style="color:#6b7280;font-weight:400;font-size:10px">${esc(s.date)}</span></div>
-          <div class="shift-meta">${esc(s.time)}${s.pool ? ' · ' + esc(s.pool) : ''}${label}</div>
+          <div class="shift-meta">${esc(s.time)}${s.pool ? ' · ' + esc(s.pool) : ''}</div>
         </div>
         <div class="shift-spots">${s.remaining} left</div>
       `;
@@ -139,9 +187,8 @@
   function toggleShift(s) {
     const idx = priorityList.findIndex(p => p.id === s.id);
     if (idx === -1) {
-      // Only store plain strings/numbers — nothing exotic
       priorityList.push({
-        id: String(s.id),
+        id:   String(s.id),
         name: String(s.name || ''),
         date: String(s.date || ''),
         time: String(s.time || ''),
@@ -173,7 +220,7 @@
         <div class="priority-num">${i + 1}</div>
         <div class="priority-info">
           <div class="priority-name">${esc(item.name)}</div>
-          <div class="priority-meta">${esc(item.date)} ${esc(item.time)}</div>
+          <div class="priority-meta">${esc(item.date)} · ${esc(item.time)}</div>
         </div>
         <div class="priority-btns">
           ${i > 0
@@ -213,7 +260,6 @@
     renderPriority();
   }
 
-  // Write priority list to storage, then tell content script to re-read it
   function persistPriority() {
     saveState({ priorityList });
     sendAction('reload_priority');
@@ -221,18 +267,18 @@
 
   // ── Arm / Disarm ───────────────────────────────────────────────────────────
   function updateArmButton() {
-    const btn = $('btnArm');
+    const btn   = $('btnArm');
     const badge = $('statusBadge');
     if (isArmed) {
-      btn.textContent = '🛑 Stop Auto-Book';
+      btn.textContent   = '🛑 Stop Auto-Book';
       btn.classList.add('active');
       badge.textContent = 'Active';
-      badge.className = 'status-badge armed';
+      badge.className   = 'status-badge armed';
     } else {
-      btn.textContent = '🔒 Enable Auto-Book';
+      btn.textContent   = '🔒 Enable Auto-Book';
       btn.classList.remove('active');
       badge.textContent = 'Inactive';
-      badge.className = 'status-badge disarmed';
+      badge.className   = 'status-badge disarmed';
     }
   }
 
@@ -250,6 +296,7 @@
   });
 
   $('btnRefresh').addEventListener('click', () => {
+    shiftsReceived = false;
     log('Refreshing...', 'info');
     sendAction('get_shifts');
   });
@@ -268,12 +315,11 @@
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url || !tab.url.includes('wardyati.com')) {
       $('mainContent').style.display = 'none';
-      $('noPage').style.display = 'block';
+      $('noPage').style.display      = 'block';
       return;
     }
     tabId = tab.id;
 
-    // Load saved priority list from storage into popup state
     loadState((state) => {
       if (Array.isArray(state.priorityList)) priorityList = state.priorityList;
       isArmed = !!state.isArmed;
@@ -281,7 +327,18 @@
     });
 
     setupBridge();
-    setTimeout(() => sendAction('get_shifts'), 350);
+
+    setTimeout(() => {
+      sendAction('get_shifts');
+      retryTimer = setInterval(() => {
+        if (shiftsReceived) { clearInterval(retryTimer); retryTimer = null; return; }
+        sendAction('get_shifts');
+      }, 800);
+      setTimeout(() => {
+        if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+        if (!shiftsReceived) log('Arena not responding — try refreshing the page', 'warn');
+      }, 15000);
+    }, 400);
   }
 
   init();

@@ -1,37 +1,44 @@
-// Wardyati Auto-Book Content Script
-// Data flows: priority list & arm state live in chrome.storage.local.
-// Popup sends only plain string action names via executeScript args.
+// Wardyati Auto-Book Content Script — v3.0
 //
-// Booking strategy:
-// - MutationObserver watches each queued shift's hold button for attribute
-//   changes and fires immediately when the button becomes clickable.
-// - setInterval at 50ms runs in parallel as a safety net.
-// - Whichever triggers first wins — a guard prevents double-firing.
-// - Round-robin across all queued shifts, max MAX_TRIALS attempts each.
+// Major fixes vs v2.2:
+//
+// 1. RATE-LIMIT SURVIVAL: The extension now detects the site's rate-limiting
+//    state by watching $store.room.isRateLimited via the Alpine store directly,
+//    and also by watching the #rate_limiting_container element visibility.
+//    While rate-limited, all shifts stay in queue and armed state is preserved.
+//    The moment rate-limiting clears, booking resumes automatically with no
+//    manual re-arm or re-selection needed.
+//
+// 2. NO PHANTOM DROPS: trialCount is only incremented on actual successful
+//    clicks (isButtonLive passed). The polling loop never increments trialCount.
+//    Shifts are only dropped for:
+//      - is_holder=true  (booked successfully)
+//      - no_place + past_time both true simultaneously (genuinely gone)
+//      - MAX_TRIALS actual click attempts all failed (server error pattern)
+//
+// 3. RATE-LIMIT AWARENESS: A dedicated isRateLimited() check reads Alpine's
+//    store directly, so we never attempt a click while rate-limited.
+//
+// 4. RATE-LIMIT BAR: Sends rate-limit status back to popup for display.
+//
+// 5. SPEED: MutationObserver watches 'disabled' on the hold button directly,
+//    firing within one browser paint of the rate-limit window ending.
+
 (function () {
   'use strict';
 
   const STORAGE_KEY    = 'wardyati_state';
   const CHECK_INTERVAL = 50;
-  const MAX_TRIALS     = 5;
+  const MAX_TRIALS     = 20;
 
   let priorityList = [];
   let isArmed      = false;
   let checkTimer   = null;
 
-  // Trial counters per shift id — session only, not persisted
   const trialCount = {};
-
-  // Round-robin cursor
-  let cursor = 0;
-
-  // MutationObserver instances per shift id — so we can disconnect them
-  // when a shift is dropped
-  const observers = {};
-
-  // Guard flag — prevents both MutationObserver and polling from firing
-  // simultaneously on the same tick
-  let firing = false;
+  let cursor       = 0;
+  const observers  = {};
+  let firing       = false;
 
   // ── Storage helpers ────────────────────────────────────────────────────────
   function readState(cb) {
@@ -53,50 +60,137 @@
     });
   }
 
+  // ── Rate-limit detection ───────────────────────────────────────────────────
+  // Read directly from Alpine's store — fastest possible source of truth.
+  // Falls back to DOM visibility of the rate-limit container.
+  function isRateLimited() {
+    try {
+      // Alpine.store is available on window via Alpine global
+      if (window.Alpine && window.Alpine.store) {
+        const room = window.Alpine.store('room');
+        if (room && typeof room.isRateLimited !== 'undefined') {
+          return !!room.isRateLimited;
+        }
+      }
+    } catch (e) { /* ignore */ }
+    // Fallback: check DOM visibility of the rate-limiting info bar
+    const container = document.getElementById('rate_limiting_container');
+    if (!container) return false;
+    return container.style.display !== 'none' &&
+           getComputedStyle(container).display !== 'none';
+  }
+
+  // Returns seconds remaining in the rate-limit window, or 0.
+  function rateLimitSecondsLeft() {
+    try {
+      if (window.Alpine && window.Alpine.store) {
+        const room = window.Alpine.store('room');
+        if (room && room.rateLimitingInfo) {
+          const info = room.rateLimitingInfo;
+          // eligible_holdings_within_window contains timestamps of recent bookings
+          if (Array.isArray(info.eligible_holdings_within_window) &&
+              info.eligible_holdings_within_window.length > 0 &&
+              info.rate_limiting_window) {
+            const oldest = Math.min(...info.eligible_holdings_within_window.map(t => new Date(t).getTime()));
+            const windowMs = info.rate_limiting_window * 1000;
+            const remaining = Math.ceil((oldest + windowMs - Date.now()) / 1000);
+            return Math.max(0, remaining);
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return 0;
+  }
+
   // ── DOM helpers ────────────────────────────────────────────────────────────
+  function getHoldButton(el) {
+    const actionDiv = el.querySelector('[x-data*="shiftInstanceAction"]');
+    if (!actionDiv) return null;
+    const buttons = actionDiv.querySelectorAll('button');
+    for (const btn of buttons) {
+      if (btn.classList.contains('btn-soft')) continue;
+      if (btn.classList.contains('shift-release-btn')) continue;
+      if (btn.querySelector('span[x-text]')) return btn;
+      if (btn.textContent.includes('حجز')) return btn;
+    }
+    return null;
+  }
+
+  function isButtonLive(btn) {
+    if (!btn) return false;
+    if (btn.disabled) return false;
+    if (btn.style.display === 'none') return false;
+    if (getComputedStyle(btn).display === 'none') return false;
+    return true;
+  }
+
+  function getRemainingSlots(el) {
+    const span = el.querySelector('.remaining_slots .number-container');
+    if (span) {
+      const n = parseInt(span.textContent.trim(), 10);
+      if (!isNaN(n)) return n;
+    }
+    const slots = parseInt(el.dataset.slots, 10);
+    return isNaN(slots) ? 1 : slots;
+  }
+
+  function getShiftDate(el) {
+    const arenaList = document.getElementById('room_arena_list');
+    if (!arenaList) return '';
+    let lastDate = '';
+    for (const child of arenaList.children) {
+      if (child.dataset && child.dataset.date) {
+        lastDate = child.dataset.date;
+      } else {
+        const m = (child.textContent || '').match(/\d{4}-\d{2}-\d{2}/);
+        if (m) lastDate = m[0];
+      }
+      if (child === el || child.contains(el)) break;
+    }
+    return lastDate;
+  }
+
   function getShiftData(el) {
     const id = String(el.dataset.shiftInstanceId || '');
     if (!id) return null;
-
-    const noPlace    = el.dataset.noPlace === 'true';
-    const pastTime   = el.dataset.pastTime === 'true';
-    const maxReached = el.dataset.maxReachedForUser === 'true';
-
-    const namEl     = el.querySelector('.text-truncate');
-    const name      = namEl ? namEl.textContent.trim() : '—';
-    const timeEl    = el.querySelector('.text-nowrap');
-    const time      = timeEl ? timeEl.textContent.trim() : '';
-    const dayCard   = el.closest('[id^="arena_day_"]');
-    const date      = dayCard ? dayCard.id.replace('arena_day_', '') : '';
-    const poolEl    = el.querySelector('.pool-info small');
+    const nameEl = el.querySelector('[dir="auto"]');
+    const name   = nameEl ? nameEl.textContent.trim() : '—';
+    const timeEl = el.querySelector('.text-monospace .text-nowrap');
+    const time   = timeEl ? timeEl.textContent.trim() : '';
+    const date      = getShiftDate(el);
+    const poolEl    = el.querySelector('.pool-info');
     const pool      = poolEl ? poolEl.textContent.trim() : '';
-    const remainEl  = el.querySelector('.remaining_holdings_count .number-container');
-    const remaining = remainEl ? parseInt(remainEl.dataset.number, 10) || 0 : 0;
-
-    return { id, name, time, date, pool, remaining, noPlace, pastTime, maxReached };
+    const remaining = getRemainingSlots(el);
+    const canHold   = el.dataset.canHold !== 'false';
+    return { id, name, time, date, pool, remaining, canHold };
   }
 
   function getAvailableShifts() {
     return Array.from(document.querySelectorAll('.arena_shift_instance'))
       .map(getShiftData)
-      .filter(s => s && !s.noPlace && !s.pastTime && s.remaining > 0);
+      .filter(Boolean);
   }
 
-  function isButtonLive(btn) {
-    return btn && !btn.classList.contains('d-none') && !btn.disabled;
+  // ── Rate-limit status broadcast ────────────────────────────────────────────
+  // Sends current rate-limit state to popup so it can show a countdown.
+  function broadcastRateLimitStatus() {
+    const limited  = isRateLimited();
+    const secondsLeft = limited ? rateLimitSecondsLeft() : 0;
+    window.dispatchEvent(new CustomEvent('wardyati_ext', {
+      detail: { type: 'rate_limit', limited, secondsLeft }
+    }));
   }
 
   // ── Queue management ───────────────────────────────────────────────────────
   function dropShift(id, reason) {
     console.log('[Wardyati] Dropping', id, '—', reason);
 
-    // Disconnect and remove the observer for this shift
     if (observers[id]) {
       observers[id].disconnect();
       delete observers[id];
     }
-
     delete trialCount[id];
+
     priorityList = priorityList.filter(p => p.id !== id);
     if (cursor >= priorityList.length) cursor = 0;
 
@@ -114,70 +208,104 @@
     }));
   }
 
-  // ── Core fire function — called by both observer and polling ───────────────
+  // ── Core fire function ─────────────────────────────────────────────────────
   function fireBooking(item, btn, source) {
     if (!isArmed) return;
-    if (firing) return;        // already being handled this instant
+    if (firing) return;
     if (!isButtonLive(btn)) return;
+    if (isRateLimited()) {
+      // Rate-limited — don't click, just make sure observer is watching
+      ensureObserving(item);
+      return;
+    }
 
     firing = true;
-
     if (!trialCount[item.id]) trialCount[item.id] = 0;
     trialCount[item.id]++;
 
     console.log(
-      `[Wardyati] [${source}] Attempt ${trialCount[item.id]}/${MAX_TRIALS}`,
+      `[Wardyati] [${source}] Click attempt ${trialCount[item.id]}/${MAX_TRIALS}`,
       item.id, item.name
     );
 
     btn.click();
 
-    // Advance cursor so polling round-robin continues correctly
     const idx = priorityList.findIndex(p => p.id === item.id);
     if (idx !== -1) cursor = (idx + 1) % priorityList.length;
 
-    // Release the guard after a single tick so the next shift can fire
-    // on the very next polling interval without unnecessary delay
-    setTimeout(() => { firing = false; }, CHECK_INTERVAL);
+    // Disconnect this shift's observer and re-attach after 50ms so it catches
+    // the button re-enabling after actionInProgress / rate-limit clears.
+    if (observers[item.id]) {
+      observers[item.id].disconnect();
+      delete observers[item.id];
+    }
+    setTimeout(() => {
+      firing = false;
+      if (isArmed && priorityList.find(p => p.id === item.id)) {
+        observeShift(item);
+      }
+    }, CHECK_INTERVAL);
+  }
+
+  // Ensure an observer is running for item without firing immediately.
+  function ensureObserving(item) {
+    if (!observers[item.id]) observeShift(item);
   }
 
   // ── MutationObserver — watches a single shift's hold button ───────────────
   function observeShift(item) {
-    if (observers[item.id]) return; // already watching
+    if (observers[item.id]) return;
 
     const liveEl = document.getElementById('shift_instance_' + item.id);
     if (!liveEl) return;
 
-    const btn = liveEl.querySelector('.button_hold');
+    const btn = getHoldButton(liveEl);
     if (!btn) return;
 
-    // If button is already live when we start observing, fire immediately
-    if (isButtonLive(btn)) {
+    // Fire immediately if live AND not rate-limited
+    if (isButtonLive(btn) && !isRateLimited()) {
       fireBooking(item, btn, 'observer-immediate');
       return;
     }
 
     const obs = new MutationObserver(() => {
       if (!isArmed) return;
-      const freshBtn = liveEl.querySelector('.button_hold');
-      if (isButtonLive(freshBtn)) {
+      const freshEl = document.getElementById('shift_instance_' + item.id);
+      if (!freshEl) return;
+
+      // Success: is_holder became visible
+      const holderIcon = freshEl.querySelector('.text-success[x-show*="is_holder"]');
+      if (holderIcon && holderIcon.style.display !== 'none') {
+        dropShift(item.id, 'is_holder indicator visible');
+        return;
+      }
+
+      const freshBtn = getHoldButton(freshEl);
+      if (isButtonLive(freshBtn) && !isRateLimited()) {
         fireBooking(item, freshBtn, 'observer');
       }
     });
 
-    // Watch for class changes (d-none removal) and attribute changes (disabled removal)
+    // Watch disabled on the button directly — fires the instant Alpine
+    // removes it when rate-limit ends or actionInProgress clears.
     obs.observe(btn, {
-      attributes: true,
-      attributeFilter: ['class', 'disabled']
+      attributes:      true,
+      attributeFilter: ['disabled', 'class', 'style']
     });
 
-    // Also observe the parent element in case htmx replaces the button entirely
     obs.observe(liveEl, {
-      childList: true,
-      subtree:   true,
-      attributes: true,
-      attributeFilter: ['class', 'disabled']
+      attributes:      true,
+      attributeFilter: ['data-is-holder', 'data-can-hold']
     });
+
+    const actionDiv = liveEl.querySelector('[x-data*="shiftInstanceAction"]');
+    if (actionDiv) {
+      obs.observe(actionDiv, {
+        subtree:         true,
+        attributes:      true,
+        attributeFilter: ['style', 'disabled']
+      });
+    }
 
     observers[item.id] = obs;
   }
@@ -191,15 +319,54 @@
     Object.keys(observers).forEach(k => delete observers[k]);
   }
 
-  // ── Polling — 50ms safety net running in parallel ──────────────────────────
+  // ── Rate-limit container watcher ───────────────────────────────────────────
+  // When the rate-limit bar disappears (isRateLimited goes false), immediately
+  // try to book the next queued shift — this is the fastest possible trigger.
+  function watchRateLimitContainer() {
+    const container = document.getElementById('rate_limiting_container');
+    if (!container) return;
+
+    const obs = new MutationObserver(() => {
+      broadcastRateLimitStatus();
+      if (!isArmed || priorityList.length === 0) return;
+      // Rate limit just cleared — attempt booking immediately
+      if (!isRateLimited()) {
+        console.log('[Wardyati] Rate limit cleared — resuming booking');
+        firing = false;
+        tryBookNext();
+        // Also poke each queued shift's observer
+        priorityList.forEach(item => {
+          if (observers[item.id]) {
+            observers[item.id].disconnect();
+            delete observers[item.id];
+          }
+          observeShift(item);
+        });
+      }
+    });
+
+    obs.observe(container, {
+      attributes:      true,
+      attributeFilter: ['style', 'class']
+    });
+
+    // Also watch Alpine store changes via the rate-limit balls element
+    const balls = document.getElementById('rate_limiting_balls');
+    if (balls) {
+      obs.observe(balls, { childList: true, subtree: true, characterData: true });
+    }
+  }
+
+  // ── Polling — 50ms safety net ──────────────────────────────────────────────
   function tryBookNext() {
     if (!isArmed || priorityList.length === 0) return;
     if (firing) return;
+    if (isRateLimited()) return;   // don't even try while rate-limited
 
     if (cursor >= priorityList.length) cursor = 0;
 
-    const start = cursor;
-    let checked = 0;
+    const start   = cursor;
+    let   checked = 0;
 
     while (checked < priorityList.length) {
       const idx  = (start + checked) % priorityList.length;
@@ -208,21 +375,27 @@
       if (!trialCount[item.id]) trialCount[item.id] = 0;
 
       if (trialCount[item.id] >= MAX_TRIALS) {
-        dropShift(item.id, 'trial cap reached');
-        tryBookNext(); // recurse after mutation
+        dropShift(item.id, 'trial cap: ' + MAX_TRIALS + ' actual clicks');
+        tryBookNext();
         return;
       }
 
       const liveEl = document.getElementById('shift_instance_' + item.id);
       if (liveEl) {
-        if (liveEl.dataset.noPlace           === 'true') { dropShift(item.id, 'no places left'); return; }
-        if (liveEl.dataset.pastTime          === 'true') { dropShift(item.id, 'past time');      return; }
-        if (liveEl.dataset.maxReachedForUser === 'true') { dropShift(item.id, 'max reached');    return; }
-
-        const btn = liveEl.querySelector('.button_hold');
-        if (isButtonLive(btn)) {
-          fireBooking(item, btn, 'polling');
+        if (liveEl.dataset.isHolder === 'true') {
+          dropShift(item.id, 'already holder');
           return;
+        }
+
+        const btn = getHoldButton(liveEl);
+        if (btn) {
+          if (isButtonLive(btn)) {
+            fireBooking(item, btn, 'polling');
+            return;
+          }
+          // Button disabled — skip, don't count
+          checked++;
+          continue;
         }
       }
 
@@ -232,29 +405,43 @@
     cursor = (cursor + 1) % Math.max(priorityList.length, 1);
   }
 
-  // ── htmx confirmation — drop shift as soon as server confirms success ──────
-  document.addEventListener('htmx:afterRequest', (evt) => {
-    const url    = (evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || '';
-    const status = evt.detail.xhr ? evt.detail.xhr.status : 0;
-    if (!url.includes('/action/hold/') || status !== 200) return;
+  // ── Arena-level success observer ───────────────────────────────────────────
+  function watchArenaForSuccess() {
+    const arenaList = document.getElementById('room_arena_list');
+    if (!arenaList) return;
 
-    const match = url.match(/shift-instances\/(\d+)\/action\/hold/);
-    if (!match) return;
-    const bookedId = match[1];
+    const arenaObs = new MutationObserver(() => {
+      priorityList.forEach(item => {
+        const el = document.getElementById('shift_instance_' + item.id);
+        if (!el) return;
+        if (el.dataset.isHolder === 'true') {
+          dropShift(item.id, 'arena observer: is_holder=true');
+        }
+      });
+    });
 
-    if (priorityList.find(p => p.id === bookedId)) {
-      dropShift(bookedId, 'server confirmed booking');
-    }
-  });
+    arenaObs.observe(arenaList, {
+      subtree:         true,
+      attributes:      true,
+      attributeFilter: ['data-is-holder']
+    });
+  }
 
   // ── Start / stop ───────────────────────────────────────────────────────────
   function startPolling() {
     stopPolling();
-    cursor  = 0;
-    firing  = false;
-    observeAllQueued();          // start observers for all queued shifts
-    tryBookNext();               // check immediately without waiting 50ms
-    checkTimer = setInterval(tryBookNext, CHECK_INTERVAL);
+    cursor = 0;
+    firing = false;
+    Object.keys(trialCount).forEach(k => delete trialCount[k]);
+    watchArenaForSuccess();
+    watchRateLimitContainer();
+    observeAllQueued();
+    tryBookNext();
+    checkTimer = setInterval(() => {
+      tryBookNext();
+      // Broadcast rate-limit status every second (20 ticks × 50ms)
+      if (Date.now() % 1000 < CHECK_INTERVAL) broadcastRateLimitStatus();
+    }, CHECK_INTERVAL);
   }
 
   function stopPolling() {
@@ -270,8 +457,14 @@
 
     if (action === 'get_shifts') {
       syncFromStorage(() => {
+        const shifts = getAvailableShifts();
+        console.log('[Wardyati] get_shifts: found', shifts.length, 'cards in DOM');
         window.dispatchEvent(new CustomEvent('wardyati_ext', {
-          detail: { type: 'shifts', shifts: getAvailableShifts(), priorityList, isArmed }
+          detail: {
+            type: 'shifts', shifts, priorityList, isArmed,
+            rateLimited: isRateLimited(),
+            rateLimitSecondsLeft: rateLimitSecondsLeft()
+          }
         }));
       });
     }
@@ -279,8 +472,8 @@
     if (action === 'reload_priority') {
       syncFromStorage(() => {
         if (isArmed) {
-          observeAllQueued(); // watch any newly added shifts too
-          startPolling();
+          // Only attach observers for newly added shifts — don't restart everything
+          observeAllQueued();
         }
       });
     }
@@ -315,5 +508,5 @@
   // Initial sync
   syncFromStorage(() => { if (isArmed) startPolling(); });
 
-  console.log('[Wardyati Auto-Book] Content script ready.');
+  console.log('[Wardyati Auto-Book] Content script ready (v3.0).');
 })();
