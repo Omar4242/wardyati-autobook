@@ -1,3 +1,13 @@
+# ⚠️ Project Status: Deprecated / Broken
+
+This extension is currently **not working** due to recent updates in wardyati website.
+It may cause errors or unexpected behavior.
+
+👉 Do NOT use in production.
+
+Status: ❌ Unmaintained / Needs update  
+Last checked: May 2026
+
 # Wardyati Auto-Book
 
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue)
